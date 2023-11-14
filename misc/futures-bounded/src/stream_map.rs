@@ -190,6 +190,7 @@ where
 #[cfg(test)]
 mod tests {
     use futures_util::stream::{once, pending};
+    use futures_util::SinkExt;
     use std::future::{poll_fn, ready, Future};
     use std::pin::Pin;
     use std::time::Instant;
@@ -264,6 +265,42 @@ mod tests {
             0,
             "resources of cancelled streams are cleaned up properly"
         );
+    }
+
+    #[tokio::test]
+    async fn replaced_stream_is_still_registered() {
+        let streams = std::sync::Arc::new(std::sync::Mutex::new(StreamMap::new(
+            Duration::from_secs(300),
+            100,
+        )));
+
+        let s = streams.clone();
+
+        let (mut tx, rx) = futures::channel::mpsc::channel(10);
+
+        let _ = streams.lock().unwrap().try_push("ID", rx);
+
+        let _ = tx.send(1).await;
+        let (id, res) = poll_fn(|cx| s.lock().unwrap().poll_next_unpin(cx)).await;
+        assert_eq!(id, "ID");
+        assert_eq!(res.unwrap().unwrap(), 1);
+        let h = tokio::spawn(async move {
+            let (id, res) = poll_fn(|cx| s.lock().unwrap().poll_next_unpin(cx)).await;
+            assert_eq!(id, "ID");
+            assert_eq!(res.unwrap().unwrap(), 2);
+        });
+
+        let (mut tx, rx) = futures::channel::mpsc::channel(10);
+        streams.lock().unwrap().remove("ID").unwrap();
+        assert!(matches!(
+            streams.lock().unwrap().try_push("ID", rx).unwrap_err(),
+            PushError::Replaced(_)
+        ));
+
+        tokio::spawn(async move {
+            let _ = tx.send(2).await;
+        });
+        h.await.unwrap();
     }
 
     // Each stream emits 1 item with delay, `Task` only has a capacity of 1, meaning they must be processed in sequence.
