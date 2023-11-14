@@ -292,6 +292,7 @@ mod tests {
 
         let (mut tx, rx) = futures::channel::mpsc::channel(10);
         streams.lock().unwrap().remove("ID").unwrap();
+        // It's also weird that this matches!
         assert!(matches!(
             streams.lock().unwrap().try_push("ID", rx).unwrap_err(),
             PushError::Replaced(_)
